@@ -43,7 +43,7 @@ def build_report_pdf(run: dict) -> bytes:
         unit_to_group.setdefault((info.get("tenant") or "Unassigned", info.get("address") or ""), []).append(unit)
 
     header = ["Point Name", "Start Read", "Start Read Date", "End Read", "End Read Date",
-              "Consumption", "Units", "Cost $ per Unit", "Charged"]
+              "Consumption", "Units", "Charged"]
     table_data = [header]
     row_styles = []
 
@@ -63,21 +63,20 @@ def build_report_pdf(run: dict) -> bytes:
                 u.get("end_date", ""),
                 f"{u['consumption_kwh']:.0f}",
                 "kWh",
-                f"${u['rate']:.2f}",
                 f"${u['charged']:.2f}",
             ])
             group_total += u["charged"]
         # Group subtotal / tenant label row
         table_data.append([
-            "", "", "", "", "", "", "", f"{address}",
+            "", "", "", "", "", "", f"{address}",
             f"${group_total:.2f}  —  {tenant}",
         ])
         row_styles.append(len(table_data) - 1)
 
     # Grand total row
-    table_data.append(["", "", "", "", "", "", "", "Total", f"${calc['running_total_charged']:.2f}"])
+    table_data.append(["", "", "", "", "", "", "Total", f"${calc['running_total_charged']:.2f}"])
 
-    col_widths = [0.7*inch, 0.6*inch, 0.85*inch, 0.6*inch, 0.85*inch, 0.65*inch, 0.4*inch, 0.75*inch, 1.3*inch]
+    col_widths = [0.85*inch, 0.7*inch, 0.95*inch, 0.7*inch, 0.95*inch, 0.75*inch, 0.5*inch, 1.6*inch]
     t = Table(table_data, colWidths=col_widths, repeatRows=1)
 
     style_cmds = [
@@ -94,7 +93,7 @@ def build_report_pdf(run: dict) -> bytes:
     for r in row_styles:
         style_cmds.append(("BACKGROUND", (0, r), (-1, r), colors.HexColor("#eef2f5")))
         style_cmds.append(("FONTNAME", (0, r), (-1, r), "Helvetica-Bold"))
-        style_cmds.append(("SPAN", (0, r), (6, r)))
+        style_cmds.append(("SPAN", (0, r), (5, r)))
 
     t.setStyle(TableStyle(style_cmds))
     elements.append(t)
