@@ -67,9 +67,10 @@ def build_report_pdf(run: dict) -> bytes:
             ])
             group_total += u["charged"]
         # Group subtotal / tenant label row
+        label = f"{address} — {tenant}" if address else tenant
         table_data.append([
-            "", "", "", "", "", "", f"{address}",
-            f"${group_total:.2f}  —  {tenant}",
+            label, "", "", "", "", "", "",
+            f"${group_total:.2f}",
         ])
         row_styles.append(len(table_data) - 1)
 
@@ -93,7 +94,8 @@ def build_report_pdf(run: dict) -> bytes:
     for r in row_styles:
         style_cmds.append(("BACKGROUND", (0, r), (-1, r), colors.HexColor("#eef2f5")))
         style_cmds.append(("FONTNAME", (0, r), (-1, r), "Helvetica-Bold"))
-        style_cmds.append(("SPAN", (0, r), (5, r)))
+        style_cmds.append(("SPAN", (0, r), (6, r)))
+        style_cmds.append(("ALIGN", (6, r), (6, r), "LEFT"))
 
     t.setStyle(TableStyle(style_cmds))
     elements.append(t)
