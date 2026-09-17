@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <h2>Email settings</h2>
+  <p class="muted">These fill in the reimbursement email drafts. They stay the same across months unless changed here.</p>
+  <form method="post">
+    <label for="billed_entity">Billed entity (who tenants reimburse)</label>
+    <input type="text" id="billed_entity" name="billed_entity" value="{{ settings.billed_entity }}">
+
+    <label for="sender_name">Email sign-off name</label>
+    <input type="text" id="sender_name" name="sender_name" value="{{ settings.sender_name }}">
+
+    <label for="contact_name">Contact name for questions</label>
+    <input type="text" id="contact_name" name="contact_name" value="{{ settings.contact_name }}">
+
+    <label for="contact_phone">Contact phone</label>
+    <input type="text" id="contact_phone" name="contact_phone" value="{{ settings.contact_phone }}">
+
+    <label for="subject_template">Subject template (leave blank for default)</label>
+    <input type="text" id="subject_template" name="subject_template" value="{{ settings.subject_template }}" placeholder="Fulton PG&amp;E Reimbursement - {month_year}">
+
+    <label for="body_template">Body template (leave blank for default)</label>
+    <textarea id="body_template" name="body_template" rows="12" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;font-family:inherit;" placeholder="Uses {first_name}, {billing_start}, {billing_end}, {billed_entity}, {amount}, {contact_name}, {contact_phone}, {sender_name}">{{ settings.body_template }}</textarea>
+    <p class="muted">Available placeholders: {'{first_name}'}, {'{billing_start}'}, {'{billing_end}'}, {'{month_year}'}, {'{billed_entity}'}, {'{amount}'}, {'{contact_name}'}, {'{contact_phone}'}, {'{sender_name}'}</p>
+
+    <button type="submit">Save settings</button>
+  </form>
+</div>
+{% endblock %}

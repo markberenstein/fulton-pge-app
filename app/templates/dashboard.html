@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block content %}
+{% set calc = run.calculation %}
+<div class="card">
+  <h2>Billing period: {{ run.billing_period.start }} &ndash; {{ run.billing_period.end }}</h2>
+
+  {% if calc.variance_flag %}
+  <div class="warn">
+    ⚠ Verification flag: Leviton total ({{ '%.2f'|format(calc.sum_consumption_kwh) }} kWh) differs from
+    the PG&E bill's kWh ({{ '%.2f'|format(calc.bill_total_kwh) }} kWh) by
+    {{ '%.2f'|format(calc.consumption_variance_kwh) }} kWh. Check for a missing or misread meter
+    before sending this report.
+  </div>
+  {% endif %}
+
+  <table style="margin-top:14px;">
+    <tr><td>Total PG&E bill</td><td class="num">${{ '%.2f'|format(calc.total_amount_due) }}</td></tr>
+    <tr><td>Total kWh (sum of Leviton units — used for rate)</td><td class="num">{{ '%.2f'|format(calc.sum_consumption_kwh) }} kWh</td></tr>
+    <tr><td>Total kWh from PG&E bill (verification only)</td><td class="num">{% if calc.bill_total_kwh %}{{ '%.2f'|format(calc.bill_total_kwh) }} kWh{% else %}—{% endif %}</td></tr>
+    <tr><td>Rate used</td><td class="num">${{ '%.5f'|format(calc.rate) }} / kWh</td></tr>
+    <tr><td><strong>Total charged to tenants</strong></td><td class="num"><strong>${{ '%.2f'|format(calc.running_total_charged) }}</strong></td></tr>
+  </table>
+
+  <a class="btn" href="{{ url_for('report', run_id=run_id) }}">Download PDF report</a>
+  <a class="btn" href="{{ url_for('emails', run_id=run_id) }}">Generate reimbursement emails</a>
+  <a class="btn" href="{{ url_for('mapping', run_id=run_id) }}" style="background:#888;">Edit mapping</a>
+</div>
+
+<div class="card">
+  <h2>By tenant</h2>
+  <table>
+    <thead><tr><th>Tenant</th><th>Address</th><th class="num">kWh</th><th class="num">Charged</th></tr></thead>
+    <tbody>
+      {% for g in run.groups %}
+      <tr>
+        <td>{{ g.tenant }}</td>
+        <td>{{ g.address }}</td>
+        <td class="num">{{ '%.0f'|format(g.total_kwh) }}</td>
+        <td class="num">${{ '%.2f'|format(g.total_charged) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>By unit</h2>
+  <table>
+    <thead><tr><th>Unit</th><th class="num">Consumption (kWh)</th><th class="num">Charged</th></tr></thead>
+    <tbody>
+      {% for u in calc.units %}
+      <tr>
+        <td>{{ u.point_name }}</td>
+        <td class="num">{{ '%.0f'|format(u.consumption_kwh) }}</td>
+        <td class="num">${{ '%.2f'|format(u.charged) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<p><a href="{{ url_for('index') }}">&larr; Back to all runs</a></p>
+{% endblock %}

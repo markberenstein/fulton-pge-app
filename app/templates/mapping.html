@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <h2>Assign units to tenants</h2>
+  <p class="muted">
+    Billing period: {{ run.billing_period.start }} &ndash; {{ run.billing_period.end }} &middot;
+    PG&E total due: ${{ '%.2f'|format(run.pge.total_amount_due) }} &middot;
+    PG&E kWh: {{ run.pge.total_kwh }}
+  </p>
+  {% if prior_mapping %}
+  <p class="muted">Pre-filled from your last run — check and adjust as needed.</p>
+  {% endif %}
+
+  <form method="post">
+    <label>Override total PG&E amount due (optional — leave blank to use ${{ '%.2f'|format(run.pge.total_amount_due) }})</label>
+    <input type="number" step="0.01" name="total_amount_due_override" placeholder="{{ '%.2f'|format(run.pge.total_amount_due) }}">
+
+    <table style="margin-top:16px;">
+      <thead>
+        <tr><th>Unit</th><th class="num">Consumption (kWh)</th><th>Tenant / business</th><th>Address</th></tr>
+      </thead>
+      <tbody>
+        {% for u in units %}
+        <tr>
+          <td>{{ u.point_name }}</td>
+          <td class="num">{{ '%.0f'|format(u.consumption_kwh) }}</td>
+          <td><input type="text" name="tenant_{{ u.unit }}" value="{{ prior_mapping.get(u.unit, {}).get('tenant', '') }}" placeholder="e.g. Jane Doe / Acme Inc"></td>
+          <td><input type="text" name="address_{{ u.unit }}" value="{{ prior_mapping.get(u.unit, {}).get('address', '') }}" placeholder="e.g. 1512 Fulton Pl"></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <button type="submit">Calculate charges &rarr;</button>
+  </form>
+</div>
+{% endblock %}

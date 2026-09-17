@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Fulton PG&E Reimbursements{% endblock %}</title>
+  <style>
+    :root { --brand: #2c3e50; --accent: #3498db; --bg: #f5f7fa; }
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+           background: var(--bg); margin: 0; color: #222; }
+    header { background: var(--brand); color: white; padding: 16px 24px; }
+    header h1 { margin: 0; font-size: 1.25rem; }
+    main { max-width: 900px; margin: 24px auto; padding: 0 16px; }
+    .card { background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { padding: 8px 10px; border-bottom: 1px solid #e5e5e5; text-align: left; }
+    th { background: #f0f2f5; }
+    .num { text-align: right; }
+    label { display: block; margin: 10px 0 4px; font-weight: 600; font-size: 0.9rem; }
+    input[type=text], input[type=number], input[type=password], input[type=file] {
+      width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.95rem;
+    }
+    button, .btn { background: var(--accent); color: white; border: none; padding: 10px 18px;
+           border-radius: 4px; cursor: pointer; font-size: 0.95rem; text-decoration: none;
+           display: inline-block; margin-top: 12px; }
+    button:hover, .btn:hover { background: #2b80b9; }
+    .flash { padding: 10px 14px; border-radius: 4px; margin-bottom: 14px; }
+    .flash.error { background: #fdecea; color: #b3261e; }
+    .warn { background: #fff8e1; border: 1px solid #f0c14b; padding: 10px 14px; border-radius: 4px; }
+    .muted { color: #777; font-size: 0.85rem; }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <header><h1>Fulton PG&E Reimbursements</h1>
+    <nav style="margin-top:6px;"><a href="{{ url_for('index') }}" style="color:#cfe3f5;margin-right:14px;">Runs</a><a href="{{ url_for('settings_view') }}" style="color:#cfe3f5;">Email settings</a></nav>
+  </header>
+  <main>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="flash {{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

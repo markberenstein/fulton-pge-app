@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <h2>New reimbursement run</h2>
+  <p class="muted">Upload this month's Leviton consumption export and the PG&E bill PDF.</p>
+  <form method="post" action="{{ url_for('upload') }}" enctype="multipart/form-data">
+    <label for="leviton_file">Leviton consumption export (.xlsx or .csv)</label>
+    <input type="file" id="leviton_file" name="leviton_file" accept=".xlsx,.csv" required>
+
+    <label for="pge_file">PG&E bill (PDF)</label>
+    <input type="file" id="pge_file" name="pge_file" accept=".pdf" required>
+
+    <button type="submit">Parse files &rarr;</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Past runs</h2>
+  {% if runs %}
+  <table>
+    <thead><tr><th>Created</th><th>Billing period</th><th class="num">Total charged</th><th></th></tr></thead>
+    <tbody>
+      {% for r in runs %}
+      <tr>
+        <td>{{ r.created_at[:10] }}</td>
+        <td>{{ r.billing_period.start if r.billing_period else '—' }} &ndash; {{ r.billing_period.end if r.billing_period else '' }}</td>
+        <td class="num">{% if r.calculation %}${{ '%.2f'|format(r.calculation.running_total_charged) }}{% else %}<span class="muted">not calculated</span>{% endif %}</td>
+        <td>
+          {% if r.calculation %}
+          <a href="{{ url_for('dashboard', run_id=r.run_id) }}">View</a>
+          {% else %}
+          <a href="{{ url_for('mapping', run_id=r.run_id) }}">Continue</a>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No runs yet.</p>
+  {% endif %}
+</div>
+{% endblock %}
