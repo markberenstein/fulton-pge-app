@@ -4,11 +4,17 @@
 def calculate_charges(units: list[dict], total_amount_due: float, bill_total_kwh: float) -> dict:
     """units: list of {unit, consumption_kwh, ...}
 
-    The charge rate's denominator is the SUM of the Leviton units' own consumption
-    readings (matching Mark's reimbursement spreadsheet), not the bill's kWh figure.
+    Each unit's charge = (unit's kWh / total Leviton kWh) x total PG&E bill.
+    The denominator is the SUM of the Leviton units' own consumption readings
+    (matching Mark's reimbursement spreadsheet), not the bill's kWh figure.
     The bill's kWh figure (bill_total_kwh) is kept only as a verification check:
     if it doesn't closely match the Leviton sum, something is off (a meter missing
     from the export, a misread, etc.) and that should be flagged.
+
+    Rounding: each unit's exact share is rounded to the nearest cent, then any
+    leftover pennies (from rounding) are distributed one at a time to the units
+    whose rounded amount was furthest below its exact share — so the charged
+    amounts always sum to exactly total_amount_due, to the penny.
     """
     sum_consumption = sum(u["consumption_kwh"] for u in units)
     if sum_consumption <= 0:
@@ -16,10 +22,25 @@ def calculate_charges(units: list[dict], total_amount_due: float, bill_total_kwh
 
     rate = total_amount_due / sum_consumption
 
+    # Exact (unrounded) share per unit, then round to the nearest cent
+    exact_charges = [u["consumption_kwh"] / sum_consumption * total_amount_due for u in units]
+    rounded_cents = [round(c * 100) for c in exact_charges]
+
+    total_cents_due = round(total_amount_due * 100)
+    leftover_cents = total_cents_due - sum(rounded_cents)
+
+    # Distribute leftover pennies to whichever units' rounding lost (or gained)
+    # the most, largest-remainder style, so the total lands exactly on the bill.
+    remainders = [exact_charges[i] * 100 - rounded_cents[i] for i in range(len(units))]
+    order = sorted(range(len(units)), key=lambda i: remainders[i], reverse=(leftover_cents > 0))
+    for i in range(abs(leftover_cents)):
+        idx = order[i % len(order)]
+        rounded_cents[idx] += 1 if leftover_cents > 0 else -1
+
     charged_units = []
     running_total = 0.0
-    for u in units:
-        charged = round(u["consumption_kwh"] * rate, 2)
+    for u, cents in zip(units, rounded_cents):
+        charged = cents / 100
         running_total += charged
         charged_units.append({**u, "rate": rate, "charged": charged})
 
