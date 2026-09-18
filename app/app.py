@@ -1,5 +1,6 @@
 import io
 import os
+from datetime import datetime
 from functools import wraps
 
 from flask import (
@@ -47,6 +48,27 @@ def logout():
     return redirect(url_for("login"))
 
 
+def _parse_mdy(value):
+    try:
+        return datetime.strptime(value, "%m/%d/%Y")
+    except (TypeError, ValueError):
+        return None
+
+
+def _past_usage_dates(runs):
+    """Prior PG&E billing periods (usage dates), most recent first, so it's
+    easy to see at a glance which periods have already been run."""
+    periods = []
+    for r in runs:
+        bp = r.get("billing_period") or {}
+        start, end = bp.get("start"), bp.get("end")
+        if not start or not end:
+            continue
+        periods.append({"start": start, "end": end, "_sort": _parse_mdy(start)})
+    periods.sort(key=lambda p: p["_sort"] or datetime.min, reverse=True)
+    return periods
+
+
 @app.route("/")
 @login_required
 def index():
@@ -55,6 +77,7 @@ def index():
         "index.html", runs=runs,
         has_sop=storage.load_sop_pdf() is not None,
         sop_uploaded_at=storage.sop_uploaded_at(),
+        past_usage_dates=_past_usage_dates(runs),
     )
 
 
