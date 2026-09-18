@@ -138,6 +138,23 @@ def build_report_pdf(run: dict) -> bytes:
     return buf.getvalue()
 
 
+def append_bill_snapshot(report_pdf_bytes: bytes, bill_pdf_bytes: bytes) -> bytes:
+    """Append the original PG&E bill's pages after the calculated report, so
+    the report carries a full snapshot of the source bill for reference —
+    matching Mark's manual sample, which pasted the bill's own pages in below
+    the calculation table."""
+    from pypdf import PdfReader, PdfWriter
+
+    writer = PdfWriter()
+    for reader in (PdfReader(io.BytesIO(report_pdf_bytes)), PdfReader(io.BytesIO(bill_pdf_bytes))):
+        for page in reader.pages:
+            writer.add_page(page)
+
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
 def _fmt_read(value):
     if value is None:
         return ""
