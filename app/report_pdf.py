@@ -100,4 +100,241 @@ def build_report_pdf(run: dict, bill_pdf_bytes: bytes | None = None) -> bytes:
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2c3e50")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("FONTSIZE", (0, 0), (-1, -1), 5.5),
-        ("TOPPADDING", (0, 0), (-1, -1), 2
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("GRID", (0, 0), (-1, -2), 0.4, colors.grey),
+        ("ALIGN", (5, 0), (-1, -1), "RIGHT"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("LINEABOVE", (0, -1), (-1, -1), 1, colors.black),
+    ]
+    for r in row_styles:
+        style_cmds.append(("BACKGROUND", (0, r), (-1, r), colors.HexColor("#eef2f5")))
+        style_cmds.append(("FONTNAME", (0, r), (-1, r), "Helvetica-Bold"))
+        style_cmds.append(("SPAN", (0, r), (6, r)))
+        style_cmds.append(("ALIGN", (6, r), (6, r), "LEFT"))
+
+    t.setStyle(TableStyle(style_cmds))
+    elements.append(t)
+    elements.append(Spacer(1, 8))
+
+    summary_data = [
+        ["Total kWh Consumption (Leviton)", f"{calc['sum_consumption_kwh']:.2f} kWh"],
+        ["Total kWh Consumption from Bill", f"{calc['bill_total_kwh']:.2f} kWh" if calc.get("bill_total_kwh") else "—"],
+        ["Total PG&E Bill", f"${calc['total_amount_due']:.2f}"],
+        ["Total Charged to Tenants", f"${calc['running_total_charged']:.2f}"],
+    ]
+    s = Table(summary_data, colWidths=[2.3*inch, 1.3*inch])
+    s.setStyle(TableStyle([
+        ("FONTSIZE", (0, 0), (-1, -1), 7.5),
+        ("TOPPADDING", (0, 0), (-1, -1), 1),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+        ("LINEBELOW", (0, -1), (-1, -1), 0.5, colors.grey),
+    ]))
+    elements.append(s)
+
+    if calc.get("variance_flag"):
+        elements.append(Spacer(1, 5))
+        elements.append(Paragraph(
+            f"⚠ Verification flag: Leviton total ({calc['sum_consumption_kwh']:.2f} kWh) differs from the "
+            f"PG&amp;E bill's kWh ({calc['bill_total_kwh']:.2f} kWh) by {calc['consumption_variance_kwh']:.2f} kWh. "
+            f"Check for a missing or misread meter before sending this report.",
+            warn_style,
+        ))
+
+    pge = run.get("pge", {})
+    if pge:
+        elements.append(Spacer(1, 6))
+        elements.append(Paragraph(
+            f"PG&amp;E Account: {_xml_escape(str(pge.get('account_number', '—')))}  |  "
+            f"Statement Date: {_xml_escape(str(pge.get('statement_date', '—')))}  |  "
+            f"Service Address: {_xml_escape(str(pge.get('service_address', '—')))}",
+            small_style,
+        ))
+
+    if bill_pdf_bytes:
+        try:
+            snapshot_flowables = _build_bill_snapshot_stack(elements, bill_pdf_bytes)
+            if snapshot_flowables:
+                elements.append(Spacer(1, 6))
+                elements.extend(snapshot_flowables)
+        except Exception:
+            # If the snapshot can't be rasterized for any reason, still
+            # deliver the calculated report rather than failing the request.
+            pass
+
+    doc.build(elements)
+    return buf.getvalue()
+
+
+# Section markers (case-insensitive substring match) identifying the three
+# PG&E bill pages Mark's manual sample includes as a snapshot: the account
+# summary/energy statement page, the summary of energy related services
+# page, and the delivery charges detail page.
+BILL_SNAPSHOT_MARKERS = [
+    "your account summary",
+    "summary of your energy related services",
+    "details of pg&e electric delivery charges",
+]
+
+
+def _select_bill_snapshot_page_indices(bill_pdf_bytes: bytes) -> list[int]:
+    """Return the 0-based page indices in the bill matching the snapshot
+    markers, in page order. Text is extracted with pdfplumber (the same
+    library that already parses the bill's numbers reliably) rather than
+    pypdf's own extract_text(), which can be extremely slow or hang outright
+    on some real-world PDFs with complex embedded fonts."""
+    import pdfplumber
+
+    matched = []
+    seen = set()
+    with pdfplumber.open(io.BytesIO(bill_pdf_bytes)) as pdf:
+        for page_index, page in enumerate(pdf.pages):
+            text = (page.extract_text() or "").lower()
+            if any(marker in text for marker in BILL_SNAPSHOT_MARKERS):
+                if page_index not in seen:
+                    matched.append(page_index)
+                    seen.add(page_index)
+    return matched
+
+
+def _select_bill_snapshot_pages(bill_pdf_bytes: bytes):
+    """Return the list of pypdf page objects from the bill matching the
+    snapshot markers, in page order. Falls back to every page of the bill
+    if none of the markers are found, so the appendix is never empty."""
+    from pypdf import PdfReader
+
+    reader = PdfReader(io.BytesIO(bill_pdf_bytes))
+    indices = _select_bill_snapshot_page_indices(bill_pdf_bytes)
+    if not indices:
+        return list(reader.pages)
+    return [reader.pages[i] for i in indices]
+
+
+def _measure_flowables_height(flowables, width, height_budget):
+    """Sum the rendered height of a list of already-built flowables against
+    a given width, so we know how much vertical space is left on the page."""
+    used = 0.0
+    for el in flowables:
+        try:
+            _, h = el.wrap(width, height_budget)
+            used += h
+        except Exception:
+            pass
+    return used
+
+
+def _crop_to_content_block(png_bytes: bytes, min_start_px: int = 150, gap_threshold_px: int = 60) -> bytes:
+    """Crop a rasterized bill page down to just its top content block —
+    the account/summary/charges table PG&E prints at the top of each of
+    these pages — dropping the chart and footer content below it, the way
+    Mark's manual sample crops each section down to just the relevant box.
+
+    Works by scanning down the page for the first tall band of near-blank
+    rows (a real gap between sections, not just line spacing within a
+    table) and cutting the image there. If no such gap is found, the full
+    page is kept."""
+    import numpy as np
+    from PIL import Image
+
+    img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
+    gray = np.array(img.convert("L"))
+    h = gray.shape[0]
+    is_blank_row = (gray < 240).mean(axis=1) < 0.01
+
+    i = min(min_start_px, h)
+    cut_row = h
+    while i < h:
+        if is_blank_row[i]:
+            j = i
+            while j < h and is_blank_row[j]:
+                j += 1
+            if j - i >= gap_threshold_px:
+                cut_row = i
+                break
+            i = j
+        else:
+            i += 1
+
+    if cut_row >= h:
+        return png_bytes
+
+    cropped = img.crop((0, 0, img.width, cut_row))
+    out = io.BytesIO()
+    cropped.save(out, format="PNG")
+    return out.getvalue()
+
+
+def _build_bill_snapshot_stack(existing_elements, bill_pdf_bytes: bytes):
+    """Rasterize the three relevant PG&E bill pages, crop each down to its
+    top content block, and lay them out as a vertical stack of thumbnails,
+    one on top of the other (full width, each sized to fit whatever
+    vertical space remains below the calculation) — matching Mark's manual
+    sample layout, which stacked the bill's sections vertically rather than
+    side by side, so the whole report fits on one page."""
+    import pymupdf
+
+    indices = _select_bill_snapshot_page_indices(bill_pdf_bytes)
+    if not indices:
+        return []
+
+    gap = 5
+    n = len(indices)
+    used_height = _measure_flowables_height(existing_elements, CONTENT_WIDTH, USABLE_HEIGHT)
+    remaining = USABLE_HEIGHT - used_height - 10 - gap * (n - 1)
+    # Keep a sensible minimum per image so thumbnails stay legible even if
+    # the calculation table ran long (the report will then flow onto a 2nd
+    # page, which is an acceptable fallback rather than illegibly tiny images).
+    max_height_each = max(remaining / n, 90)
+
+    src = pymupdf.open(stream=bill_pdf_bytes, filetype="pdf")
+    flowables = []
+    for i, idx in enumerate(indices):
+        page = src[idx]
+        pix = page.get_pixmap(dpi=150)
+        png_bytes = _crop_to_content_block(pix.tobytes("png"))
+        from PIL import Image as PILImage
+        with PILImage.open(io.BytesIO(png_bytes)) as pil_img:
+            iw, ih = pil_img.size
+        aspect = ih / iw
+        w = CONTENT_WIDTH
+        h = w * aspect
+        if h > max_height_each:
+            h = max_height_each
+            w = h / aspect
+        img = RLImage(io.BytesIO(png_bytes), width=w, height=h)
+        img.hAlign = "CENTER"
+        if i > 0:
+            flowables.append(Spacer(1, gap))
+        flowables.append(img)
+    src.close()
+
+    return flowables
+
+
+def append_bill_snapshot(report_pdf_bytes: bytes, bill_pdf_bytes: bytes) -> bytes:
+    """Legacy fallback: append the relevant PG&E bill pages as full extra
+    pages after the calculated report (rather than as inline thumbnails).
+    Kept for cases where the compact single-page layout can't be built."""
+    from pypdf import PdfReader, PdfWriter
+
+    writer = PdfWriter()
+    for page in PdfReader(io.BytesIO(report_pdf_bytes)).pages:
+        writer.add_page(page)
+    for page in _select_bill_snapshot_pages(bill_pdf_bytes):
+        writer.add_page(page)
+
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
+def _fmt_read(value):
+    if value is None:
+        return ""
+    try:
+        return f"{float(value):,.1f}"
+    except (TypeError, ValueError):
+        return str(value)
