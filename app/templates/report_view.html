@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card" style="padding:0;overflow:hidden;">
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #e5e5e5;">
+    <a href="{{ url_for('dashboard', run_id=run_id) }}" class="btn" style="margin:0;background:#888;">&times; Close</a>
+    <a href="{{ url_for('report', run_id=run_id) }}" class="btn" style="margin:0;">Download</a>
+  </div>
+  <iframe src="{{ url_for('report_inline', run_id=run_id) }}" style="width:100%;height:80vh;border:0;display:block;"></iframe>
+</div>
+{% endblock %}
