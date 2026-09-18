@@ -218,3 +218,11 @@ def mapping(run_id):
 
 
 @
+@app.route("/dashboard/<run_id>")
+@login_required
+def dashboard(run_id):
+    run = storage.load_run(run_id)
+    if not run or "calculation" not in run:
+        flash("Run not found or not yet calculated.", "error")
+        return redirect(url_for("index"))
+    return render_template("dashboard.html", run=run, run_id=run_id)
