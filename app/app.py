@@ -69,12 +69,23 @@ def _past_usage_dates(runs):
     return periods
 
 
+def _sort_runs_by_billing_period(runs):
+    """Past runs, ordered by billing period start date (most recent on top)
+    rather than upload/created time, so the list reads in usage-period
+    order. Runs with no billing period yet (still mid-mapping) sink to the
+    bottom rather than being dropped."""
+    def key(r):
+        bp = r.get("billing_period") or {}
+        return _parse_mdy(bp.get("start")) or datetime.min
+    return sorted(runs, key=key, reverse=True)
+
+
 @app.route("/")
 @login_required
 def index():
     runs = storage.list_runs()
     return render_template(
-        "index.html", runs=runs,
+        "index.html", runs=_sort_runs_by_billing_period(runs),
         has_sop=storage.load_sop_pdf() is not None,
         sop_uploaded_at=storage.sop_uploaded_at(),
         past_usage_dates=_past_usage_dates(runs),
@@ -203,117 +214,3 @@ def mapping(run_id):
 
     return render_template(
         "mapping.html", run=run, units=units, run_id=run_id,
-        prior_mapping=run.get("mapping") or prior_mapping,
-    )
-
-
-@app.route("/dashboard/<run_id>")
-@login_required
-def dashboard(run_id):
-    run = storage.load_run(run_id)
-    if not run or "calculation" not in run:
-        flash("Run not found or not yet calculated.", "error")
-        return redirect(url_for("index"))
-    return render_template("dashboard.html", run=run, run_id=run_id)
-
-
-def _generate_report_pdf_bytes(run_id, run):
-    bill_bytes = storage.load_bill_pdf(run_id)
-    try:
-        pdf_bytes = build_report_pdf(run, bill_pdf_bytes=bill_bytes)
-    except Exception:
-        # Fall back to the calculation-only report, then try appending the
-        # bill as extra full pages, rather than failing the request.
-        pdf_bytes = build_report_pdf(run)
-        if bill_bytes:
-            try:
-                pdf_bytes = append_bill_snapshot(pdf_bytes, bill_bytes)
-            except Exception:
-                pass
-    return pdf_bytes
-
-
-def _report_filename(run):
-    period = run.get("billing_period", {})
-    return f"Fulton_PGE_Reimbursement_{period.get('start', '').replace('/', '-')}.pdf" or "Fulton_PGE_Reimbursement.pdf"
-
-
-@app.route("/report/<run_id>")
-@login_required
-def report_view(run_id):
-    """A small wrapper page around the PDF, with the app's normal header/nav
-    plus an explicit Close button — the raw PDF response has no page chrome
-    at all, so on mobile there was previously no way back to the app."""
-    run = storage.load_run(run_id)
-    if not run or "calculation" not in run:
-        flash("Run not found or not yet calculated.", "error")
-        return redirect(url_for("index"))
-    return render_template("report_view.html", run=run, run_id=run_id)
-
-
-@app.route("/report/<run_id>.pdf")
-@login_required
-def report(run_id):
-    run = storage.load_run(run_id)
-    if not run or "calculation" not in run:
-        flash("Run not found or not yet calculated.", "error")
-        return redirect(url_for("index"))
-    pdf_bytes = _generate_report_pdf_bytes(run_id, run)
-    return send_file(
-        io.BytesIO(pdf_bytes),
-        mimetype="application/pdf",
-        as_attachment=True,
-        download_name=_report_filename(run),
-    )
-
-
-@app.route("/report/<run_id>/inline.pdf")
-@login_required
-def report_inline(run_id):
-    """Same PDF as /report/<run_id>.pdf, but served inline (not as a forced
-    download) so report_view.html can embed it in an iframe."""
-    run = storage.load_run(run_id)
-    if not run or "calculation" not in run:
-        flash("Run not found or not yet calculated.", "error")
-        return redirect(url_for("index"))
-    pdf_bytes = _generate_report_pdf_bytes(run_id, run)
-    return send_file(
-        io.BytesIO(pdf_bytes),
-        mimetype="application/pdf",
-        as_attachment=False,
-        download_name=_report_filename(run),
-    )
-
-
-@app.route("/emails/<run_id>")
-@login_required
-def emails(run_id):
-    run = storage.load_run(run_id)
-    if not run or "calculation" not in run:
-        flash("Run not found or not yet calculated.", "error")
-        return redirect(url_for("index"))
-    settings = storage.get_settings()
-    drafts = build_email_drafts(run, settings)
-    return render_template("emails.html", run=run, run_id=run_id, drafts=drafts)
-
-
-@app.route("/settings", methods=["GET", "POST"])
-@login_required
-def settings_view():
-    settings = storage.get_settings()
-    if request.method == "POST":
-        settings["billed_entity"] = request.form.get("billed_entity", "").strip()
-        settings["contact_name"] = request.form.get("contact_name", "").strip()
-        settings["contact_phone"] = request.form.get("contact_phone", "").strip()
-        settings["sender_name"] = request.form.get("sender_name", "").strip()
-        settings["subject_template"] = request.form.get("subject_template", "").strip()
-        settings["body_template"] = request.form.get("body_template", "").strip()
-        storage.save_settings(settings)
-        flash("Settings saved.", "success")
-        return redirect(url_for("settings_view"))
-    return render_template("settings.html", settings=settings)
-
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
