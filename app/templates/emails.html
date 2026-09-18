@@ -1,9 +1,12 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-  <h2>Reimbursement email drafts</h2>
+  <div style="display:flex;align-items:center;justify-content:space-between;">
+    <h2 style="margin:0;">Reimbursement email drafts</h2>
+    <a href="{{ url_for('dashboard', run_id=run_id) }}" class="btn" style="margin:0;background:#888;">&times; Close</a>
+  </div>
   <p class="muted">Copy each into a Buildium message to the tenant. Attach the PDF report below to each.</p>
-  <a class="btn" href="{{ url_for('report', run_id=run_id) }}">Download PDF report to attach</a>
+  <a class="btn" href="{{ url_for('report_view', run_id=run_id) }}">View / download PDF report to attach</a>
 </div>
 
 {% for d in drafts %}
@@ -16,17 +19,34 @@
   <textarea readonly rows="10" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;font-family:inherit;" id="body-{{ loop.index }}">{{ d.body }}</textarea>
   <button type="button" onclick="copyField('subject-{{ loop.index }}')">Copy subject</button>
   <button type="button" onclick="copyField('body-{{ loop.index }}')">Copy body</button>
+  <button type="button" onclick="copyFullEmail({{ loop.index }})">Copy full email</button>
+  <span class="muted" id="copied-{{ loop.index }}" style="display:none;margin-left:8px;">Copied!</span>
 </div>
 {% endfor %}
 
 <p><a href="{{ url_for('dashboard', run_id=run_id) }}">&larr; Back to dashboard</a></p>
 
 <script>
+function flashCopied(idx) {
+  const note = document.getElementById('copied-' + idx);
+  if (!note) return;
+  note.style.display = 'inline';
+  setTimeout(() => { note.style.display = 'none'; }, 1500);
+}
+
 function copyField(id) {
   const el = document.getElementById(id);
   el.select();
   el.setSelectionRange(0, 99999);
   navigator.clipboard.writeText(el.value);
+}
+
+function copyFullEmail(idx) {
+  const subject = document.getElementById('subject-' + idx).value;
+  const body = document.getElementById('body-' + idx).value;
+  const full = 'Subject: ' + subject + '\n\n' + body;
+  navigator.clipboard.writeText(full);
+  flashCopied(idx);
 }
 </script>
 {% endblock %}
