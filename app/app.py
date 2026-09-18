@@ -51,7 +51,55 @@ def logout():
 @login_required
 def index():
     runs = storage.list_runs()
-    return render_template("index.html", runs=runs)
+    return render_template(
+        "index.html", runs=runs,
+        has_sop=storage.load_sop_pdf() is not None,
+        sop_uploaded_at=storage.sop_uploaded_at(),
+    )
+
+
+@app.route("/runs/<run_id>/delete", methods=["POST"])
+@login_required
+def delete_run(run_id):
+    storage.delete_run(run_id)
+    flash("Run deleted (moved to an archive folder — let Mark know if it needs to come back).", "success")
+    return redirect(url_for("index"))
+
+
+@app.route("/sop")
+@login_required
+def sop_view():
+    if storage.load_sop_pdf() is None:
+        flash("No SOP uploaded yet.", "error")
+        return redirect(url_for("index"))
+    return render_template("sop_view.html")
+
+
+@app.route("/sop.pdf")
+@login_required
+def sop_pdf():
+    data = storage.load_sop_pdf()
+    if data is None:
+        flash("No SOP uploaded yet.", "error")
+        return redirect(url_for("index"))
+    return send_file(
+        io.BytesIO(data),
+        mimetype="application/pdf",
+        as_attachment=False,
+        download_name="Fulton_PGE_Reimbursement_SOP.pdf",
+    )
+
+
+@app.route("/sop/upload", methods=["POST"])
+@login_required
+def upload_sop():
+    sop_file = request.files.get("sop_file")
+    if not sop_file or sop_file.filename == "":
+        flash("Please choose a PDF file.", "error")
+        return redirect(url_for("index"))
+    storage.save_sop_pdf(sop_file.read())
+    flash("SOP uploaded.", "success")
+    return redirect(url_for("index"))
 
 
 @app.route("/upload", methods=["POST"])
