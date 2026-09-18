@@ -1,3 +1,4 @@
+import io
 import os
 from functools import wraps
 
@@ -8,7 +9,7 @@ from flask import (
 from pge_parser import parse_pge_bill, PGEParseError
 from leviton_parser import parse_leviton_export, LevitonParseError
 from calculator import calculate_charges, group_by_tenant
-from report_pdf import build_report_pdf
+from report_pdf import build_report_pdf, append_bill_snapshot
 from email_templates import build_email_drafts
 import storage
 
@@ -72,8 +73,9 @@ def upload():
         flash(f"Leviton file error: {e}", "error")
         return redirect(url_for("index"))
 
+    pge_bytes = pge_file.read()
     try:
-        pge = parse_pge_bill(pge_file.stream)
+        pge = parse_pge_bill(io.BytesIO(pge_bytes))
     except PGEParseError as e:
         flash(f"PG&E PDF error: {e}", "error")
         return redirect(url_for("index"))
@@ -86,6 +88,7 @@ def upload():
         "mapping": {},
     }
     storage.save_run(run_id, run)
+    storage.save_bill_pdf(run_id, pge_bytes)
     return redirect(url_for("mapping", run_id=run_id))
 
 
@@ -151,10 +154,20 @@ def report(run_id):
         flash("Run not found or not yet calculated.", "error")
         return redirect(url_for("index"))
     pdf_bytes = build_report_pdf(run)
+
+    bill_bytes = storage.load_bill_pdf(run_id)
+    if bill_bytes:
+        try:
+            pdf_bytes = append_bill_snapshot(pdf_bytes, bill_bytes)
+        except Exception:
+            # If the original bill can't be merged for any reason, still
+            # deliver the calculated report rather than failing the request.
+            pass
+
     period = run.get("billing_period", {})
     fname = f"Fulton_PGE_Reimbursement_{period.get('start', '').replace('/', '-')}.pdf"
     return send_file(
-        __import__("io").BytesIO(pdf_bytes),
+        io.BytesIO(pdf_bytes),
         mimetype="application/pdf",
         as_attachment=True,
         download_name=fname or "Fulton_PGE_Reimbursement.pdf",
