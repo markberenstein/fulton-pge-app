@@ -21,7 +21,7 @@
     <tr><td><strong>Total charged to tenants</strong></td><td class="num"><strong>${{ '%.2f'|format(calc.running_total_charged) }}</strong></td></tr>
   </table>
 
-  <a class="btn" href="{{ url_for('report', run_id=run_id) }}" target="_blank" rel="noopener">Download PDF report</a>
+  <a class="btn" href="{{ url_for('report_view', run_id=run_id) }}">View / download PDF report</a>
   <a class="btn" href="{{ url_for('emails', run_id=run_id) }}">Generate reimbursement emails</a>
   <a class="btn" href="{{ url_for('mapping', run_id=run_id) }}" style="background:#888;">Edit mapping</a>
 </div>
