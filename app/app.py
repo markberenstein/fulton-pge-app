@@ -153,16 +153,18 @@ def report(run_id):
     if not run or "calculation" not in run:
         flash("Run not found or not yet calculated.", "error")
         return redirect(url_for("index"))
-    pdf_bytes = build_report_pdf(run)
-
     bill_bytes = storage.load_bill_pdf(run_id)
-    if bill_bytes:
-        try:
-            pdf_bytes = append_bill_snapshot(pdf_bytes, bill_bytes)
-        except Exception:
-            # If the original bill can't be merged for any reason, still
-            # deliver the calculated report rather than failing the request.
-            pass
+    try:
+        pdf_bytes = build_report_pdf(run, bill_pdf_bytes=bill_bytes)
+    except Exception:
+        # Fall back to the calculation-only report, then try appending the
+        # bill as extra full pages, rather than failing the request.
+        pdf_bytes = build_report_pdf(run)
+        if bill_bytes:
+            try:
+                pdf_bytes = append_bill_snapshot(pdf_bytes, bill_bytes)
+            except Exception:
+                pass
 
     period = run.get("billing_period", {})
     fname = f"Fulton_PGE_Reimbursement_{period.get('start', '').replace('/', '-')}.pdf"
