@@ -103,3 +103,50 @@ def load_bill_pdf(run_id: str) -> bytes | None:
         return None
     with open(path, "rb") as f:
         return f.read()
+
+
+DELETED_RUNS_DIR = os.path.join(RUNS_DIR, "_deleted")
+
+
+def delete_run(run_id: str):
+    """'Delete' a run from the list by moving its files into RUNS_DIR/_deleted
+    rather than erasing them outright, so a run can still be recovered if
+    someone deletes the wrong one by mistake."""
+    os.makedirs(DELETED_RUNS_DIR, exist_ok=True)
+    run_path = os.path.join(RUNS_DIR, f"{run_id}.json")
+    if os.path.exists(run_path):
+        os.replace(run_path, os.path.join(DELETED_RUNS_DIR, f"{run_id}.json"))
+    bill_path = _bill_pdf_path(run_id)
+    if os.path.exists(bill_path):
+        os.replace(bill_path, os.path.join(DELETED_RUNS_DIR, os.path.basename(bill_path)))
+
+
+SOP_PATH_NAME = "sop.pdf"
+
+
+def _sop_path() -> str:
+    return os.path.join(DATA_DIR, SOP_PATH_NAME)
+
+
+def save_sop_pdf(data: bytes):
+    """Save the PG&E Reimbursement SOP PDF. Stored in DATA_DIR (the same
+    private, non-git volume as run history) rather than in the repo, since
+    Mark's SOP has his live Leviton login/password written on it."""
+    _ensure_dirs()
+    with open(_sop_path(), "wb") as f:
+        f.write(data)
+
+
+def load_sop_pdf() -> bytes | None:
+    path = _sop_path()
+    if not os.path.exists(path):
+        return None
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def sop_uploaded_at() -> str | None:
+    path = _sop_path()
+    if not os.path.exists(path):
+        return None
+    return datetime.fromtimestamp(os.path.getmtime(path), tz=timezone.utc).strftime("%Y-%m-%d")
