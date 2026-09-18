@@ -217,7 +217,7 @@ def mapping(run_id):
     )
 
 
-@
+
 @app.route("/dashboard/<run_id>")
 @login_required
 def dashboard(run_id):
