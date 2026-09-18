@@ -153,25 +153,33 @@ BILL_SNAPSHOT_MARKERS = [
 def _select_bill_snapshot_pages(bill_pdf_bytes: bytes):
     """Return the list of pypdf page objects from the bill matching the
     snapshot markers, in page order. Falls back to every page of the bill
-    if none of the markers are found, so the appendix is never empty."""
+    if none of the markers are found, so the appendix is never empty.
+
+    Text is extracted with pdfplumber (the same library that already parses
+    the bill's numbers reliably) rather than pypdf's own extract_text(),
+    which can be extremely slow or hang outright on some real-world PDFs
+    with complex embedded fonts. pypdf is used only for the fast, simple
+    step of copying the matched pages into the merged report."""
+    import pdfplumber
     from pypdf import PdfReader
 
-    reader = PdfReader(io.BytesIO(bill_pdf_bytes))
-    selected = []
-    seen_pages = set()
-    for page_index, page in enumerate(reader.pages):
-        text = (page.extract_text() or "").lower()
-        if any(marker in text for marker in BILL_SNAPSHOT_MARKERS):
-            if page_index not in seen_pages:
-                selected.append(page)
-                seen_pages.add(page_index)
+    matched_indices = []
+    seen = set()
+    with pdfplumber.open(io.BytesIO(bill_pdf_bytes)) as pdf:
+        for page_index, page in enumerate(pdf.pages):
+            text = (page.extract_text() or "").lower()
+            if any(marker in text for marker in BILL_SNAPSHOT_MARKERS):
+                if page_index not in seen:
+                    matched_indices.append(page_index)
+                    seen.add(page_index)
 
-    if not selected:
+    reader = PdfReader(io.BytesIO(bill_pdf_bytes))
+    if not matched_indices:
         # Nothing matched (e.g. an unrecognized bill layout) — include the
         # whole bill rather than silently dropping the snapshot.
-        selected = list(reader.pages)
+        return list(reader.pages)
 
-    return selected
+    return [reader.pages[i] for i in matched_indices]
 
 
 def append_bill_snapshot(report_pdf_bytes: bytes, bill_pdf_bytes: bytes) -> bytes:
