@@ -15,6 +15,27 @@
 </div>
 
 <div class="card">
+  <h2>Full PG&E Reimbursement SOP</h2>
+  {% if has_sop %}
+  <a class="btn" href="{{ url_for('sop_view') }}">View Full PG&E Reimbursement SOP</a>
+  <p class="muted">Uploaded {{ sop_uploaded_at }}</p>
+  <details style="margin-top:8px;">
+    <summary class="muted" style="cursor:pointer;">Replace SOP file</summary>
+    <form method="post" action="{{ url_for('upload_sop') }}" enctype="multipart/form-data" style="margin-top:10px;">
+      <input type="file" name="sop_file" accept=".pdf" required>
+      <button type="submit">Upload</button>
+    </form>
+  </details>
+  {% else %}
+  <p class="muted">No SOP uploaded yet.</p>
+  <form method="post" action="{{ url_for('upload_sop') }}" enctype="multipart/form-data">
+    <input type="file" name="sop_file" accept=".pdf" required>
+    <button type="submit">Upload SOP PDF</button>
+  </form>
+  {% endif %}
+</div>
+
+<div class="card">
   <h2>Past runs</h2>
   {% if runs %}
   <table>
@@ -31,6 +52,9 @@
           {% else %}
           <a href="{{ url_for('mapping', run_id=r.run_id) }}">Continue</a>
           {% endif %}
+          <form method="post" action="{{ url_for('delete_run', run_id=r.run_id) }}" style="display:inline;" onsubmit="return confirm('Delete this run? It will be moved out of the list and can be recovered if needed.');">
+            <button type="submit" style="background:#c0392b;padding:4px 10px;margin:0 0 0 10px;font-size:0.8rem;">Delete</button>
+          </form>
         </td>
       </tr>
       {% endfor %}
