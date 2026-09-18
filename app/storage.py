@@ -83,3 +83,23 @@ def save_settings(data: dict):
     _ensure_dirs()
     with open(_settings_path(), "w") as f:
         json.dump(data, f, indent=2)
+
+
+def _bill_pdf_path(run_id: str) -> str:
+    return os.path.join(RUNS_DIR, f"{run_id}_pge_bill.pdf")
+
+
+def save_bill_pdf(run_id: str, data: bytes):
+    """Save the original uploaded PG&E bill PDF so it can be attached as a
+    'bill snapshot' appendix to the generated reimbursement report."""
+    _ensure_dirs()
+    with open(_bill_pdf_path(run_id), "wb") as f:
+        f.write(data)
+
+
+def load_bill_pdf(run_id: str) -> bytes | None:
+    path = _bill_pdf_path(run_id)
+    if not os.path.exists(path):
+        return None
+    with open(path, "rb") as f:
+        return f.read()
