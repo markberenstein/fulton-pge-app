@@ -4,8 +4,39 @@
   <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #e5e5e5;">
     <a href="{{ url_for('index') }}" class="btn" style="margin:0;background:#888;">&times; Close</a>
     <strong>Full PG&E Reimbursement SOP (if AI unavailable)</strong>
-    <span style="width:80px;"></span>
+    <a href="{{ url_for('sop_pdf_download') }}" class="btn" style="margin:0;">Download</a>
   </div>
-  <iframe src="{{ url_for('sop_pdf') }}" style="width:100%;height:80vh;border:0;display:block;"></iframe>
+  <div id="sop-pdf-container" style="width:100%;max-height:80vh;overflow-y:auto;-webkit-overflow-scrolling:touch;background:#525659;padding:12px 0;text-align:center;">
+    <p class="muted" style="color:#fff;">Loading SOP&hellip;</p>
+  </div>
 </div>
+
+<script type="module">
+  import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/build/pdf.min.mjs";
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/build/pdf.worker.min.mjs";
+
+  const container = document.getElementById('sop-pdf-container');
+  const url = "{{ url_for('sop_pdf') }}";
+
+  pdfjsLib.getDocument(url).promise.then(async function (pdf) {
+    container.innerHTML = '';
+    for (let num = 1; num <= pdf.numPages; num++) {
+      const page = await pdf.getPage(num);
+      const unscaled = page.getViewport({ scale: 1 });
+      const scale = Math.min(2, Math.max(0.5, (container.clientWidth - 24) / unscaled.width));
+      const viewport = page.getViewport({ scale });
+      const canvas = document.createElement('canvas');
+      canvas.style.display = 'block';
+      canvas.style.margin = '0 auto 12px auto';
+      canvas.style.background = '#fff';
+      canvas.style.boxShadow = '0 1px 4px rgba(0,0,0,0.3)';
+      canvas.height = viewport.height;
+      canvas.width = viewport.width;
+      container.appendChild(canvas);
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+    }
+  }).catch(function (err) {
+    container.innerHTML = '<p class="muted" style="color:#fff;">Could not load the SOP inline (' + (err && err.message ? err.message : 'unknown error') + '). Use the Download button above instead.</p>';
+  });
+</script>
 {% endblock %}
