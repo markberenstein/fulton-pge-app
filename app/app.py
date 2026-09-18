@@ -146,13 +146,7 @@ def dashboard(run_id):
     return render_template("dashboard.html", run=run, run_id=run_id)
 
 
-@app.route("/report/<run_id>.pdf")
-@login_required
-def report(run_id):
-    run = storage.load_run(run_id)
-    if not run or "calculation" not in run:
-        flash("Run not found or not yet calculated.", "error")
-        return redirect(url_for("index"))
+def _generate_report_pdf_bytes(run_id, run):
     bill_bytes = storage.load_bill_pdf(run_id)
     try:
         pdf_bytes = build_report_pdf(run, bill_pdf_bytes=bill_bytes)
@@ -165,14 +159,58 @@ def report(run_id):
                 pdf_bytes = append_bill_snapshot(pdf_bytes, bill_bytes)
             except Exception:
                 pass
+    return pdf_bytes
 
+
+def _report_filename(run):
     period = run.get("billing_period", {})
-    fname = f"Fulton_PGE_Reimbursement_{period.get('start', '').replace('/', '-')}.pdf"
+    return f"Fulton_PGE_Reimbursement_{period.get('start', '').replace('/', '-')}.pdf" or "Fulton_PGE_Reimbursement.pdf"
+
+
+@app.route("/report/<run_id>")
+@login_required
+def report_view(run_id):
+    """A small wrapper page around the PDF, with the app's normal header/nav
+    plus an explicit Close button — the raw PDF response has no page chrome
+    at all, so on mobile there was previously no way back to the app."""
+    run = storage.load_run(run_id)
+    if not run or "calculation" not in run:
+        flash("Run not found or not yet calculated.", "error")
+        return redirect(url_for("index"))
+    return render_template("report_view.html", run=run, run_id=run_id)
+
+
+@app.route("/report/<run_id>.pdf")
+@login_required
+def report(run_id):
+    run = storage.load_run(run_id)
+    if not run or "calculation" not in run:
+        flash("Run not found or not yet calculated.", "error")
+        return redirect(url_for("index"))
+    pdf_bytes = _generate_report_pdf_bytes(run_id, run)
     return send_file(
         io.BytesIO(pdf_bytes),
         mimetype="application/pdf",
         as_attachment=True,
-        download_name=fname or "Fulton_PGE_Reimbursement.pdf",
+        download_name=_report_filename(run),
+    )
+
+
+@app.route("/report/<run_id>/inline.pdf")
+@login_required
+def report_inline(run_id):
+    """Same PDF as /report/<run_id>.pdf, but served inline (not as a forced
+    download) so report_view.html can embed it in an iframe."""
+    run = storage.load_run(run_id)
+    if not run or "calculation" not in run:
+        flash("Run not found or not yet calculated.", "error")
+        return redirect(url_for("index"))
+    pdf_bytes = _generate_report_pdf_bytes(run_id, run)
+    return send_file(
+        io.BytesIO(pdf_bytes),
+        mimetype="application/pdf",
+        as_attachment=False,
+        download_name=_report_filename(run),
     )
 
 
