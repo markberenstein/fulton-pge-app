@@ -138,17 +138,54 @@ def build_report_pdf(run: dict) -> bytes:
     return buf.getvalue()
 
 
+# Section markers (case-insensitive substring match) identifying the three
+# PG&E bill pages Mark's manual sample includes as a snapshot: the account
+# summary/energy statement page, the summary of energy related services
+# page, and the delivery charges detail page. Matched in this order but kept
+# in their natural page order within the source bill.
+BILL_SNAPSHOT_MARKERS = [
+    "your account summary",
+    "summary of your energy related services",
+    "details of pg&e electric delivery charges",
+]
+
+
+def _select_bill_snapshot_pages(bill_pdf_bytes: bytes):
+    """Return the list of pypdf page objects from the bill matching the
+    snapshot markers, in page order. Falls back to every page of the bill
+    if none of the markers are found, so the appendix is never empty."""
+    from pypdf import PdfReader
+
+    reader = PdfReader(io.BytesIO(bill_pdf_bytes))
+    selected = []
+    seen_pages = set()
+    for page_index, page in enumerate(reader.pages):
+        text = (page.extract_text() or "").lower()
+        if any(marker in text for marker in BILL_SNAPSHOT_MARKERS):
+            if page_index not in seen_pages:
+                selected.append(page)
+                seen_pages.add(page_index)
+
+    if not selected:
+        # Nothing matched (e.g. an unrecognized bill layout) — include the
+        # whole bill rather than silently dropping the snapshot.
+        selected = list(reader.pages)
+
+    return selected
+
+
 def append_bill_snapshot(report_pdf_bytes: bytes, bill_pdf_bytes: bytes) -> bytes:
-    """Append the original PG&E bill's pages after the calculated report, so
-    the report carries a full snapshot of the source bill for reference —
-    matching Mark's manual sample, which pasted the bill's own pages in below
-    the calculation table."""
+    """Append only the relevant PG&E bill pages after the calculated report —
+    the account summary, the summary of energy related services, and the
+    delivery charges detail page — matching Mark's manual sample, which
+    pasted just those specific bill pages in below the calculation table."""
     from pypdf import PdfReader, PdfWriter
 
     writer = PdfWriter()
-    for reader in (PdfReader(io.BytesIO(report_pdf_bytes)), PdfReader(io.BytesIO(bill_pdf_bytes))):
-        for page in reader.pages:
-            writer.add_page(page)
+    for page in PdfReader(io.BytesIO(report_pdf_bytes)).pages:
+        writer.add_page(page)
+    for page in _select_bill_snapshot_pages(bill_pdf_bytes):
+        writer.add_page(page)
 
     out = io.BytesIO()
     writer.write(out)
