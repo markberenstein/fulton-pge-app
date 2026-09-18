@@ -176,21 +176,32 @@ def build_report_pdf(run: dict, bill_pdf_bytes: bytes | None = None) -> bytes:
 # energy-services summary. "start_marker"/"end_marker" (case-insensitive,
 # searched as plain text) bound a tight crop around just that section's box;
 # leaving "end_marker" unset falls back to the old blank-row-gap heuristic.
+# "right_marker" additionally crops the RIGHT edge at that text's left
+# edge — used to drop the Rate Identification Number / QR code column,
+# which isn't part of what Mark wants shown. "width_fraction" caps how
+# wide (as a fraction of the full content width) that section renders at;
+# 1.0 (the default when omitted) uses the full width, same as before.
 BILL_SNAPSHOT_SECTIONS = [
     {
         "search_marker": "details of pg&e electric delivery charges",
         "start_marker": "Details of PG&E Electric Delivery Charges",
         "end_marker": "Energy Charges",
+        "right_marker": "Rate Identification Number",
+        "width_fraction": 0.6,
     },
     {
         "search_marker": "your account summary",
         "start_marker": None,
         "end_marker": None,
+        "right_marker": None,
+        "width_fraction": 1.0,
     },
     {
         "search_marker": "summary of your energy related services",
         "start_marker": None,
         "end_marker": None,
+        "right_marker": None,
+        "width_fraction": 1.0,
     },
 ]
 
@@ -215,6 +226,8 @@ def _select_bill_snapshot_sections(bill_pdf_bytes: bytes) -> list[dict]:
                         "page_index": page_index,
                         "start_marker": section["start_marker"],
                         "end_marker": section["end_marker"],
+                        "right_marker": section.get("right_marker"),
+                        "width_fraction": section.get("width_fraction", 1.0),
                     })
                     break
     return results
@@ -257,13 +270,15 @@ def _crop_to_content_block(
     png_bytes: bytes,
     top_px: int = 0,
     bottom_px: int | None = None,
+    right_px: int | None = None,
     min_start_px: int = 150,
     gap_threshold_px: int = 60,
 ) -> bytes:
     """Crop a rasterized bill page down to just one content block, dropping
     everything else on the page (a header from a different section above it,
-    the usage chart and footer below it) — the way Mark's manual sample
-    crops each section down to just its relevant box.
+    the usage chart and footer below it, or — with right_px — a column to
+    the right like the Rate Identification Number / QR code box) — the way
+    Mark's manual sample crops each section down to just its relevant box.
 
     When bottom_px is given (both boundaries were found precisely by text
     search — see _build_bill_snapshot_stack), the crop is exact: top_px to
@@ -285,7 +300,8 @@ def _crop_to_content_block(
         bottom_trim = 2
         top = max(top_px - top_margin, 0)
         bottom = max(min(bottom_px - bottom_trim, img.height), top + 1)
-        cropped = img.crop((0, top, img.width, bottom))
+        right = img.width if right_px is None else max(min(right_px, img.width), 1)
+        cropped = img.crop((0, top, right, bottom))
         out = io.BytesIO()
         cropped.save(out, format="PNG")
         return out.getvalue()
@@ -340,13 +356,14 @@ def _build_bill_snapshot_stack(existing_elements, bill_pdf_bytes: bytes):
     """Rasterize the three relevant PG&E bill sections, crop each down to
     just its own box — tightly, by text position, for the Details of
     Electric Delivery Charges section, since Mark asked for that section
-    to only show the period/service/customer-charge block and nothing
-    from the account-summary header above it or the usage breakdown below
-    it — and lay them out as a vertical stack of thumbnails, Delivery
-    Charges first (it carries the electric usage period date), then
-    Account Summary, then the energy-services summary, one on top of the
-    other, full width, each sized to fit whatever vertical space remains
-    below the calculation — matching Mark's manual sample layout."""
+    to only show the period/service/customer-charge block (dropping the
+    Rate Identification Number / QR code column on top of the vertical
+    trim already applied) — and lay them out as a vertical stack of
+    thumbnails, Delivery Charges first (it carries the electric usage
+    period date) rendered smaller since it's the least of the three, then
+    Account Summary and the energy-services summary each rendered at full
+    width and given whatever vertical space Delivery Charges didn't need —
+    matching Mark's manual sample layout."""
     import pdfplumber
     import pymupdf
 
@@ -356,8 +373,8 @@ def _build_bill_snapshot_stack(existing_elements, bill_pdf_bytes: bytes):
 
     scale = _SNAPSHOT_DPI / 72.0
 
-    # Resolve each section's tight top/bottom crop bounds (in raster pixels)
-    # up front, while we still have the bill open in pdfplumber for text search.
+    # Resolve each section's tight crop bounds (in raster pixels) up front,
+    # while we still have the bill open in pdfplumber for text search.
     with pdfplumber.open(io.BytesIO(bill_pdf_bytes)) as pdf:
         for section in sections:
             page = pdf.pages[section["page_index"]]
@@ -373,6 +390,16 @@ def _build_bill_snapshot_stack(existing_elements, bill_pdf_bytes: bytes):
                     bottom_px = int(end_pt * scale)
             section["top_px"] = top_px
             section["bottom_px"] = bottom_px
+            section["right_px"] = None
+            if section["right_marker"]:
+                try:
+                    right_results = page.search(section["right_marker"], case=False)
+                except TypeError:
+                    right_results = page.search(section["right_marker"])
+                if right_results:
+                    # Leave a small margin before the column we're cropping out.
+                    right_pt = right_results[0]["x0"] - 8
+                    section["right_px"] = max(int(right_pt * scale), 1)
 
     gap = 5
     n = len(sections)
@@ -381,33 +408,60 @@ def _build_bill_snapshot_stack(existing_elements, bill_pdf_bytes: bytes):
     # Keep a sensible minimum per image so thumbnails stay legible even if
     # the calculation table ran long (the report will then flow onto a 2nd
     # page, which is an acceptable fallback rather than illegibly tiny images).
-    max_height_each = max(remaining / n, 90)
+    fallback_max_height_each = max(remaining / n, 90)
 
     src = pymupdf.open(stream=bill_pdf_bytes, filetype="pdf")
-    flowables = []
-    for i, section in enumerate(sections):
+
+    # Render the cropped PNG + natural aspect ratio for every section first,
+    # so we know how tall the reduced-width first section actually comes out
+    # before deciding how much height is left for the other two.
+    rendered = []
+    for section in sections:
         page = src[section["page_index"]]
         pix = page.get_pixmap(dpi=_SNAPSHOT_DPI)
         png_bytes = _crop_to_content_block(
             pix.tobytes("png"),
             top_px=section["top_px"],
             bottom_px=section["bottom_px"],
+            right_px=section["right_px"],
         )
         from PIL import Image as PILImage
         with PILImage.open(io.BytesIO(png_bytes)) as pil_img:
             iw, ih = pil_img.size
-        aspect = ih / iw
-        w = CONTENT_WIDTH
-        h = w * aspect
-        if h > max_height_each:
-            h = max_height_each
-            w = h / aspect
-        img = RLImage(io.BytesIO(png_bytes), width=w, height=h)
+        rendered.append({
+            "png_bytes": png_bytes,
+            "aspect": ih / iw,
+            "width_fraction": section["width_fraction"],
+        })
+    src.close()
+
+    # First section renders at its own (smaller) width cap; whatever height
+    # it actually uses is subtracted from the shared budget before the
+    # remaining sections split what's left, so they can grow to fill it.
+    first = rendered[0]
+    first_w = CONTENT_WIDTH * first["width_fraction"]
+    first_h = min(first_w * first["aspect"], fallback_max_height_each)
+    first_w = first_h / first["aspect"]
+
+    rest_count = max(n - 1, 1)
+    remaining_after_first = remaining - first_h - gap
+    max_height_rest = max(remaining_after_first / rest_count, 90)
+
+    flowables = []
+    for i, r in enumerate(rendered):
+        if i == 0:
+            w, h = first_w, first_h
+        else:
+            w = CONTENT_WIDTH * r["width_fraction"]
+            h = w * r["aspect"]
+            if h > max_height_rest:
+                h = max_height_rest
+                w = h / r["aspect"]
+        img = RLImage(io.BytesIO(r["png_bytes"]), width=w, height=h)
         img.hAlign = "CENTER"
         if i > 0:
             flowables.append(Spacer(1, gap))
         flowables.append(img)
-    src.close()
 
     return flowables
 
