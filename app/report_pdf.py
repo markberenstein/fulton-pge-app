@@ -169,41 +169,68 @@ def build_report_pdf(run: dict, bill_pdf_bytes: bytes | None = None) -> bytes:
     return buf.getvalue()
 
 
-# Section markers (case-insensitive substring match) identifying the three
-# PG&E bill pages Mark's manual sample includes as a snapshot: the account
-# summary/energy statement page, the summary of energy related services
-# page, and the delivery charges detail page.
-BILL_SNAPSHOT_MARKERS = [
-    "your account summary",
-    "summary of your energy related services",
-    "details of pg&e electric delivery charges",
+# The three PG&E bill sections Mark's manual sample includes as a snapshot,
+# in the ORDER he wants them displayed (not the bill's own page order): the
+# Details of Electric Delivery Charges box first, since that's where the
+# electric usage period date lives, then the account summary, then the
+# energy-services summary. "start_marker"/"end_marker" (case-insensitive,
+# searched as plain text) bound a tight crop around just that section's box;
+# leaving "end_marker" unset falls back to the old blank-row-gap heuristic.
+BILL_SNAPSHOT_SECTIONS = [
+    {
+        "search_marker": "details of pg&e electric delivery charges",
+        "start_marker": "Details of PG&E Electric Delivery Charges",
+        "end_marker": "Energy Charges",
+    },
+    {
+        "search_marker": "your account summary",
+        "start_marker": None,
+        "end_marker": None,
+    },
+    {
+        "search_marker": "summary of your energy related services",
+        "start_marker": None,
+        "end_marker": None,
+    },
 ]
+
+
+def _select_bill_snapshot_sections(bill_pdf_bytes: bytes) -> list[dict]:
+    """Return one entry per matched section, in the display order Mark
+    wants (BILL_SNAPSHOT_SECTIONS order), each with the section's page index
+    plus its start/end marker text (in pixel terms, resolved later) for a
+    tight crop. Text is extracted with pdfplumber (the same library that
+    already parses the bill's numbers reliably) rather than pypdf's own
+    extract_text(), which can be extremely slow or hang outright on some
+    real-world PDFs with complex embedded fonts."""
+    import pdfplumber
+
+    results = []
+    with pdfplumber.open(io.BytesIO(bill_pdf_bytes)) as pdf:
+        for section in BILL_SNAPSHOT_SECTIONS:
+            for page_index, page in enumerate(pdf.pages):
+                text = (page.extract_text() or "").lower()
+                if section["search_marker"] in text:
+                    results.append({
+                        "page_index": page_index,
+                        "start_marker": section["start_marker"],
+                        "end_marker": section["end_marker"],
+                    })
+                    break
+    return results
 
 
 def _select_bill_snapshot_page_indices(bill_pdf_bytes: bytes) -> list[int]:
     """Return the 0-based page indices in the bill matching the snapshot
-    markers, in page order. Text is extracted with pdfplumber (the same
-    library that already parses the bill's numbers reliably) rather than
-    pypdf's own extract_text(), which can be extremely slow or hang outright
-    on some real-world PDFs with complex embedded fonts."""
-    import pdfplumber
-
-    matched = []
-    seen = set()
-    with pdfplumber.open(io.BytesIO(bill_pdf_bytes)) as pdf:
-        for page_index, page in enumerate(pdf.pages):
-            text = (page.extract_text() or "").lower()
-            if any(marker in text for marker in BILL_SNAPSHOT_MARKERS):
-                if page_index not in seen:
-                    matched.append(page_index)
-                    seen.add(page_index)
-    return matched
+    sections, in natural page order (used only by the legacy full-page
+    fallback below, where display order doesn't matter)."""
+    return sorted({s["page_index"] for s in _select_bill_snapshot_sections(bill_pdf_bytes)})
 
 
 def _select_bill_snapshot_pages(bill_pdf_bytes: bytes):
     """Return the list of pypdf page objects from the bill matching the
-    snapshot markers, in page order. Falls back to every page of the bill
-    if none of the markers are found, so the appendix is never empty."""
+    snapshot sections, in page order. Falls back to every page of the bill
+    if none of the sections are found, so the appendix is never empty."""
     from pypdf import PdfReader
 
     reader = PdfReader(io.BytesIO(bill_pdf_bytes))
@@ -226,20 +253,47 @@ def _measure_flowables_height(flowables, width, height_budget):
     return used
 
 
-def _crop_to_content_block(png_bytes: bytes, min_start_px: int = 150, gap_threshold_px: int = 60) -> bytes:
-    """Crop a rasterized bill page down to just its top content block —
-    the account/summary/charges table PG&E prints at the top of each of
-    these pages — dropping the chart and footer content below it, the way
-    Mark's manual sample crops each section down to just the relevant box.
+def _crop_to_content_block(
+    png_bytes: bytes,
+    top_px: int = 0,
+    bottom_px: int | None = None,
+    min_start_px: int = 150,
+    gap_threshold_px: int = 60,
+) -> bytes:
+    """Crop a rasterized bill page down to just one content block, dropping
+    everything else on the page (a header from a different section above it,
+    the usage chart and footer below it) — the way Mark's manual sample
+    crops each section down to just its relevant box.
 
-    Works by scanning down the page for the first tall band of near-blank
-    rows (a real gap between sections, not just line spacing within a
-    table) and cutting the image there. If no such gap is found, the full
-    page is kept."""
-    import numpy as np
+    When bottom_px is given (both boundaries were found precisely by text
+    search — see _build_bill_snapshot_stack), the crop is exact: top_px to
+    bottom_px, plus a small margin. Otherwise this falls back to the older
+    heuristic: starting at top_px, scan down for the first tall band of
+    near-blank rows (a real gap between sections, not just line spacing
+    within a table) and cut there; if no such gap is found, keep the rest
+    of the page."""
     from PIL import Image
 
     img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
+
+    if bottom_px is not None:
+        # Small padding above the section's heading, but none below: the
+        # bottom bound is the top edge of the next section's heading, and
+        # PG&E's line spacing there is tight enough that any extra margin
+        # picks up a sliver of that next line's text.
+        top_margin = 6
+        bottom_trim = 2
+        top = max(top_px - top_margin, 0)
+        bottom = max(min(bottom_px - bottom_trim, img.height), top + 1)
+        cropped = img.crop((0, top, img.width, bottom))
+        out = io.BytesIO()
+        cropped.save(out, format="PNG")
+        return out.getvalue()
+
+    import numpy as np
+
+    if top_px:
+        img = img.crop((0, top_px, img.width, img.height))
     gray = np.array(img.convert("L"))
     h = gray.shape[0]
     is_blank_row = (gray < 240).mean(axis=1) < 0.01
@@ -259,7 +313,9 @@ def _crop_to_content_block(png_bytes: bytes, min_start_px: int = 150, gap_thresh
             i += 1
 
     if cut_row >= h:
-        return png_bytes
+        out = io.BytesIO()
+        img.save(out, format="PNG")
+        return out.getvalue()
 
     cropped = img.crop((0, 0, img.width, cut_row))
     out = io.BytesIO()
@@ -267,21 +323,59 @@ def _crop_to_content_block(png_bytes: bytes, min_start_px: int = 150, gap_thresh
     return out.getvalue()
 
 
+_SNAPSHOT_DPI = 150
+
+
+def _find_marker_top(pdfplumber_page, marker_text: str) -> float | None:
+    """Return the top y-coordinate (PDF points) of the first line matching
+    marker_text on this pdfplumber page, or None if not found."""
+    try:
+        results = pdfplumber_page.search(marker_text, case=False)
+    except TypeError:
+        results = pdfplumber_page.search(marker_text)
+    return results[0]["top"] if results else None
+
+
 def _build_bill_snapshot_stack(existing_elements, bill_pdf_bytes: bytes):
-    """Rasterize the three relevant PG&E bill pages, crop each down to its
-    top content block, and lay them out as a vertical stack of thumbnails,
-    one on top of the other (full width, each sized to fit whatever
-    vertical space remains below the calculation) — matching Mark's manual
-    sample layout, which stacked the bill's sections vertically rather than
-    side by side, so the whole report fits on one page."""
+    """Rasterize the three relevant PG&E bill sections, crop each down to
+    just its own box — tightly, by text position, for the Details of
+    Electric Delivery Charges section, since Mark asked for that section
+    to only show the period/service/customer-charge block and nothing
+    from the account-summary header above it or the usage breakdown below
+    it — and lay them out as a vertical stack of thumbnails, Delivery
+    Charges first (it carries the electric usage period date), then
+    Account Summary, then the energy-services summary, one on top of the
+    other, full width, each sized to fit whatever vertical space remains
+    below the calculation — matching Mark's manual sample layout."""
+    import pdfplumber
     import pymupdf
 
-    indices = _select_bill_snapshot_page_indices(bill_pdf_bytes)
-    if not indices:
+    sections = _select_bill_snapshot_sections(bill_pdf_bytes)
+    if not sections:
         return []
 
+    scale = _SNAPSHOT_DPI / 72.0
+
+    # Resolve each section's tight top/bottom crop bounds (in raster pixels)
+    # up front, while we still have the bill open in pdfplumber for text search.
+    with pdfplumber.open(io.BytesIO(bill_pdf_bytes)) as pdf:
+        for section in sections:
+            page = pdf.pages[section["page_index"]]
+            top_px = 0
+            bottom_px = None
+            if section["start_marker"]:
+                top_pt = _find_marker_top(page, section["start_marker"])
+                if top_pt is not None:
+                    top_px = int(top_pt * scale)
+            if section["end_marker"]:
+                end_pt = _find_marker_top(page, section["end_marker"])
+                if end_pt is not None:
+                    bottom_px = int(end_pt * scale)
+            section["top_px"] = top_px
+            section["bottom_px"] = bottom_px
+
     gap = 5
-    n = len(indices)
+    n = len(sections)
     used_height = _measure_flowables_height(existing_elements, CONTENT_WIDTH, USABLE_HEIGHT)
     remaining = USABLE_HEIGHT - used_height - 10 - gap * (n - 1)
     # Keep a sensible minimum per image so thumbnails stay legible even if
@@ -291,10 +385,14 @@ def _build_bill_snapshot_stack(existing_elements, bill_pdf_bytes: bytes):
 
     src = pymupdf.open(stream=bill_pdf_bytes, filetype="pdf")
     flowables = []
-    for i, idx in enumerate(indices):
-        page = src[idx]
-        pix = page.get_pixmap(dpi=150)
-        png_bytes = _crop_to_content_block(pix.tobytes("png"))
+    for i, section in enumerate(sections):
+        page = src[section["page_index"]]
+        pix = page.get_pixmap(dpi=_SNAPSHOT_DPI)
+        png_bytes = _crop_to_content_block(
+            pix.tobytes("png"),
+            top_px=section["top_px"],
+            bottom_px=section["bottom_px"],
+        )
         from PIL import Image as PILImage
         with PILImage.open(io.BytesIO(png_bytes)) as pil_img:
             iw, ih = pil_img.size
