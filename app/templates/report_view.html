@@ -3,12 +3,11 @@
 <div class="card" style="padding:0;overflow:hidden;">
   <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #e5e5e5;">
     <a href="{{ url_for('dashboard', run_id=run_id) }}" class="btn" style="margin:0;background:#888;">&times; Close</a>
-    <a href="{{ url_for('report', run_id=run_id) }}" class="btn" style="margin:0;">Download</a>
+    <button type="button" id="share-pdf-btn-top" class="btn" style="margin:0;">Save / Share PDF</button>
   </div>
   <iframe src="{{ url_for('report_inline', run_id=run_id) }}" style="width:100%;height:80vh;border:0;display:block;"></iframe>
   <div style="padding:12px 16px;border-top:1px solid #e5e5e5;text-align:center;">
     <button type="button" id="share-pdf-btn" class="btn" style="margin:0 6px;">Save / Share PDF</button>
-    <a href="{{ url_for('report', run_id=run_id) }}" class="btn" style="margin:0 6px;">Download PDF</a>
     <p id="share-pdf-msg" class="muted" style="margin:8px 0 0;"></p>
   </div>
 </div>
@@ -17,11 +16,11 @@
   // Opens the phone's share sheet with the PDF attached, so on iPhone you can
   // choose "Save to Files" (works from a Home Screen app, which has no Safari toolbar).
   (function () {
-    var btn = document.getElementById('share-pdf-btn');
+    var btns = [document.getElementById('share-pdf-btn'), document.getElementById('share-pdf-btn-top')];
     var msg = document.getElementById('share-pdf-msg');
     var pdfUrl = "{{ url_for('report_inline', run_id=run_id) }}";
     var fileName = "Fulton_PGE_Reimbursement_{{ (run.billing_period.start or '')|replace('/', '-') }}.pdf";
-    btn.addEventListener('click', function () {
+    function run() {
       msg.textContent = 'Preparing PDF…';
       fetch(pdfUrl, { credentials: 'same-origin' })
         .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); })
@@ -30,12 +29,16 @@
           if (navigator.canShare && navigator.canShare({ files: [file] })) {
             return navigator.share({ files: [file], title: fileName }).then(function () { msg.textContent = ''; });
           }
-          msg.textContent = 'Sharing isn\'t supported here. Use the Download PDF button instead.';
+          var a = document.createElement('a');
+          a.href = URL.createObjectURL(blob); a.download = fileName;
+          document.body.appendChild(a); a.click(); a.remove();
+          msg.textContent = 'PDF downloaded.';
         })
         .catch(function (err) {
-          msg.textContent = (err && err.name === 'AbortError') ? '' : 'Could not share the PDF (' + (err && err.message ? err.message : 'error') + '). Use the Download PDF button instead.';
+          msg.textContent = (err && err.name === 'AbortError') ? '' : 'Could not share the PDF (' + (err && err.message ? err.message : 'error') + ').';
         });
-    });
+    }
+    btns.forEach(function (b) { b.addEventListener('click', run); });
   })();
 </script>
 {% endblock %}
