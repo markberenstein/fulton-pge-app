@@ -7,8 +7,35 @@
   </div>
   <iframe src="{{ url_for('report_inline', run_id=run_id) }}" style="width:100%;height:80vh;border:0;display:block;"></iframe>
   <div style="padding:12px 16px;border-top:1px solid #e5e5e5;text-align:center;">
-    <a href="{{ url_for('report_inline', run_id=run_id) }}" target="_blank" rel="noopener" class="btn" style="margin:0 6px;">Open PDF in new tab</a>
+    <button type="button" id="share-pdf-btn" class="btn" style="margin:0 6px;">Save / Share PDF</button>
     <a href="{{ url_for('report', run_id=run_id) }}" class="btn" style="margin:0 6px;">Download PDF</a>
+    <p id="share-pdf-msg" class="muted" style="margin:8px 0 0;"></p>
   </div>
 </div>
+
+<script>
+  // Opens the phone's share sheet with the PDF attached, so on iPhone you can
+  // choose "Save to Files" (works from a Home Screen app, which has no Safari toolbar).
+  (function () {
+    var btn = document.getElementById('share-pdf-btn');
+    var msg = document.getElementById('share-pdf-msg');
+    var pdfUrl = "{{ url_for('report_inline', run_id=run_id) }}";
+    var fileName = "Fulton_PGE_Reimbursement_{{ (run.billing_period.start or '')|replace('/', '-') }}.pdf";
+    btn.addEventListener('click', function () {
+      msg.textContent = 'Preparing PDF…';
+      fetch(pdfUrl, { credentials: 'same-origin' })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); })
+        .then(function (blob) {
+          var file = new File([blob], fileName, { type: 'application/pdf' });
+          if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            return navigator.share({ files: [file], title: fileName }).then(function () { msg.textContent = ''; });
+          }
+          msg.textContent = 'Sharing isn\'t supported here. Use the Download PDF button instead.';
+        })
+        .catch(function (err) {
+          msg.textContent = (err && err.name === 'AbortError') ? '' : 'Could not share the PDF (' + (err && err.message ? err.message : 'error') + '). Use the Download PDF button instead.';
+        });
+    });
+  })();
+</script>
 {% endblock %}
